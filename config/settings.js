@@ -21,10 +21,10 @@ module.exports = {
 
   // OWNER INFORMATION
   owner: {
-    name: 'Ahmed',
+    name: 'AHMED',
     numbers: [],
     sudo: [],
-    developer: 'Ahmed'
+    developer: 'AHMED'
   },
 
   // COMMAND SETTINGS
