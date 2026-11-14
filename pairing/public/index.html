@@ -1,0 +1,60 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101014">
+  <title>ALPHA-MD | Pairing</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="navbar">
+    <h2>ALPHA<span>-MD</span></h2>
+    <div class="online">● SYSTEM</div>
+  </header>
+
+  <main class="container">
+    <div class="logo">A</div>
+
+    <h1>ALPHA<span>-MD</span></h1>
+    <p class="subtitle">NEXT GENERATION WHATSAPP BOT</p>
+
+    <section class="card">
+      <h2>CONNECT WHATSAPP</h2>
+      <p>Enter your WhatsApp number to get a pairing code.</p>
+
+      <form id="pairForm">
+        <label for="phone">PHONE NUMBER</label>
+        <input
+          type="tel"
+          id="phone"
+          placeholder="923001234567"
+          autocomplete="tel"
+          required
+        >
+
+        <button type="submit" id="pairBtn">
+          GET PAIRING CODE
+        </button>
+      </form>
+
+      <div id="result" class="result" hidden>
+        <p>YOUR PAIRING CODE</p>
+        <h2 id="pairCode"></h2>
+        <button type="button" id="copyBtn">COPY CODE</button>
+      </div>
+
+      <p id="status" role="status"></p>
+    </section>
+
+    <footer>
+      <p>© ALPHA-MD</p>
+      <p>POWERED BY AHMED</p>
+    </footer>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
