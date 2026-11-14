@@ -11,7 +11,7 @@ module.exports = {
   bot: {
     name: 'ALPHA-MD',
     version: '1.0.0',
-    author: 'Ahmed',
+    author: 'AHMED',
     packname: 'ALPHA-MD',
     description: 'Next Generation WhatsApp Bot',
     footer: 'POWERED BY AHMED',
