@@ -12,6 +12,7 @@ const pino = require('pino');
 
 const autoReply = require('./lib/auto-reply');
 const settings = require('./config/settings');
+const startPairingServer = require('./pairing/server');
 
 const CONFIG = {
   name: 'ALPHA-MD',
@@ -31,6 +32,7 @@ global.startTime = Date.now();
 let sock;
 let starting = false;
 let retryTimer = null;
+let pairingServer = null;
 
 function makeFolders() {
   [
@@ -87,9 +89,10 @@ function loadPlugins() {
 
   for (const file of getPluginFiles(CONFIG.plugins)) {
     try {
-      delete require.cache[require.resolve(path.resolve(file))];
+      const resolved = require.resolve(path.resolve(file));
+      delete require.cache[resolved];
 
-      const plugin = require(path.resolve(file));
+      const plugin = require(resolved);
 
       if (
         !plugin ||
@@ -108,6 +111,7 @@ function loadPlugins() {
 
       loaded++;
       console.log(`[PLUGIN] ${plugin.command}`);
+
     } catch (error) {
       console.error(`[PLUGIN ERROR] ${file}:`, error.message);
     }
@@ -119,20 +123,23 @@ function loadPlugins() {
 function isOwner(message) {
   const key = message.key || {};
 
-  const possibleJids = [
+  const jids = [
     key.participant,
     key.participantAlt,
     key.remoteJid,
     key.remoteJidAlt
   ].filter(Boolean);
 
-  const senderNumbers = possibleJids.map(jid =>
-    String(jid).split('@')[0].split(':')[0].replace(/\D/g, '')
+  const numbers = jids.map(jid =>
+    String(jid)
+      .split('@')[0]
+      .split(':')[0]
+      .replace(/\D/g, '')
   );
 
   return CONFIG.owner.some(number => {
-    const ownerNumber = String(number).replace(/\D/g, '');
-    return ownerNumber && senderNumbers.includes(ownerNumber);
+    const clean = String(number).replace(/\D/g, '');
+    return clean && numbers.includes(clean);
   });
 }
 
@@ -153,7 +160,10 @@ async function handleMessage(message) {
 
     // AUTO REPLY
     if (!text.startsWith(CONFIG.prefix)) {
-      if (typeof autoReply.getReply === 'function') {
+      if (
+        settings?.automation?.autoReply === true &&
+        typeof autoReply.getReply === 'function'
+      ) {
         const reply = autoReply.getReply(text);
 
         if (reply) {
@@ -168,7 +178,7 @@ async function handleMessage(message) {
       return;
     }
 
-    // COMMAND HANDLER
+    // COMMAND PARSER
     const body = text.slice(CONFIG.prefix.length).trim();
     if (!body) return;
 
@@ -226,6 +236,7 @@ function scheduleReconnect() {
 
 async function startBot() {
   if (starting) return;
+
   starting = true;
 
   try {
@@ -286,10 +297,21 @@ async function startBot() {
   } catch (error) {
     console.error('[START ERROR]', error);
     scheduleReconnect();
+
   } finally {
     starting = false;
   }
 }
+
+// START PAIRING WEBSITE
+function startWebsite() {
+  if (pairingServer) return;
+
+  pairingServer = startPairingServer(() => sock);
+}
+
+startWebsite();
+startBot();
 
 process.on('uncaughtException', error => {
   console.error('[FATAL ERROR]', error);
@@ -298,5 +320,3 @@ process.on('uncaughtException', error => {
 process.on('unhandledRejection', error => {
   console.error('[PROMISE ERROR]', error);
 });
-
-startBot();
