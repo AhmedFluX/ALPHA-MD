@@ -179,7 +179,7 @@ GitHub| Project Hosting
 
 1. Clone Repository
 
-git clone https://github.com/YOUR-USERNAME/ALPHA-MD.git
+git clone https://github.com/AhmedFluX/ALPHA-MD.git
 
 2. Open Project
 
