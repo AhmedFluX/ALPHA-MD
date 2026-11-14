@@ -16,7 +16,7 @@ const settings = require('./config/settings');
 const CONFIG = {
   name: 'ALPHA-MD',
   version: '1.0.0',
-  author: 'Ahmed',
+  author: 'AHMED',
   prefix: settings?.command?.prefix || '.',
   mode: settings?.command?.mode || 'public',
   owner: settings?.owner?.numbers || [],
@@ -30,7 +30,7 @@ global.startTime = Date.now();
 
 let sock;
 let starting = false;
-let reconnecting = false;
+let retryTimer = null;
 
 function makeFolders() {
   [
@@ -40,9 +40,7 @@ function makeFolders() {
     './temp',
     './logs'
   ].forEach(folder => {
-    if (!fs.existsSync(folder)) {
-      fs.mkdirSync(folder, { recursive: true });
-    }
+    fs.mkdirSync(folder, { recursive: true });
   });
 }
 
@@ -55,6 +53,9 @@ function getMessageText(message) {
     msg.imageMessage?.caption ||
     msg.videoMessage?.caption ||
     msg.documentMessage?.caption ||
+    msg.buttonsResponseMessage?.selectedButtonId ||
+    msg.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    msg.templateButtonReplyMessage?.selectedId ||
     ''
   ).trim();
 }
@@ -70,11 +71,8 @@ function getPluginFiles(dir) {
     const fullPath = path.join(dir, item.name);
 
     if (item.isDirectory()) {
-      files = files.concat(getPluginFiles(fullPath));
-    } else if (
-      item.isFile() &&
-      item.name.endsWith('.js')
-    ) {
+      files.push(...getPluginFiles(fullPath));
+    } else if (item.isFile() && item.name.endsWith('.js')) {
       files.push(fullPath);
     }
   }
@@ -85,12 +83,11 @@ function getPluginFiles(dir) {
 function loadPlugins() {
   global.commands.clear();
 
-  const files = getPluginFiles(CONFIG.plugins);
   let loaded = 0;
 
-  for (const file of files) {
+  for (const file of getPluginFiles(CONFIG.plugins)) {
     try {
-      delete require.cache[require.resolve(file)];
+      delete require.cache[require.resolve(path.resolve(file))];
 
       const plugin = require(path.resolve(file));
 
@@ -100,63 +97,78 @@ function loadPlugins() {
         typeof plugin.execute !== 'function'
       ) continue;
 
-      const commands = [
+      const names = [
         plugin.command,
         ...(Array.isArray(plugin.alias) ? plugin.alias : [])
       ];
 
-      for (const command of commands) {
-        global.commands.set(
-          String(command).toLowerCase(),
-          plugin
-        );
+      for (const name of names) {
+        global.commands.set(String(name).toLowerCase(), plugin);
       }
 
       loaded++;
-      console.log('[PLUGIN]', plugin.command);
+      console.log(`[PLUGIN] ${plugin.command}`);
     } catch (error) {
-      console.error('[PLUGIN ERROR]', file, error.message);
+      console.error(`[PLUGIN ERROR] ${file}:`, error.message);
     }
   }
 
   console.log(`[ALPHA-MD] ${loaded} plugins loaded.`);
 }
 
+function isOwner(message) {
+  const key = message.key || {};
+
+  const possibleJids = [
+    key.participant,
+    key.participantAlt,
+    key.remoteJid,
+    key.remoteJidAlt
+  ].filter(Boolean);
+
+  const senderNumbers = possibleJids.map(jid =>
+    String(jid).split('@')[0].split(':')[0].replace(/\D/g, '')
+  );
+
+  return CONFIG.owner.some(number => {
+    const ownerNumber = String(number).replace(/\D/g, '');
+    return ownerNumber && senderNumbers.includes(ownerNumber);
+  });
+}
+
 async function handleMessage(message) {
   try {
     if (!message.message || message.key.fromMe) return;
-    if (message.key.remoteJid === 'status@broadcast') return;
 
     const chat = message.key.remoteJid;
-    const sender = message.key.participant || chat;
-    const text = getMessageText(message);
 
+    if (!chat || chat === 'status@broadcast') return;
+
+    const text = getMessageText(message);
     if (!text) return;
 
-    const isOwner = CONFIG.owner.some(number => {
-      const clean = String(number).replace(/\D/g, '');
-      return clean && sender.split('@')[0].split(':')[0] === clean;
-    });
+    const owner = isOwner(message);
 
-    // PRIVATE MODE
-    if (CONFIG.mode === 'private' && !isOwner) return;
+    if (CONFIG.mode === 'private' && !owner) return;
 
     // AUTO REPLY
     if (!text.startsWith(CONFIG.prefix)) {
-      const reply = autoReply.getReply(text);
+      if (typeof autoReply.getReply === 'function') {
+        const reply = autoReply.getReply(text);
 
-      if (reply) {
-        await sock.sendMessage(
-          chat,
-          { text: reply },
-          { quoted: message }
-        );
+        if (reply) {
+          await sock.sendMessage(
+            chat,
+            { text: String(reply) },
+            { quoted: message }
+          );
+        }
       }
 
       return;
     }
 
-    // COMMAND PARSER
+    // COMMAND HANDLER
     const body = text.slice(CONFIG.prefix.length).trim();
     if (!body) return;
 
@@ -164,11 +176,9 @@ async function handleMessage(message) {
     const command = args.shift().toLowerCase();
 
     const plugin = global.commands.get(command);
-
     if (!plugin) return;
 
-    // OWNER ONLY
-    if (plugin.ownerOnly && !isOwner) {
+    if (plugin.ownerOnly && !owner) {
       return sock.sendMessage(
         chat,
         { text: 'This command is only for the bot owner.' },
@@ -176,8 +186,9 @@ async function handleMessage(message) {
       );
     }
 
-    // GROUP ONLY
-    if (plugin.groupOnly && !chat.endsWith('@g.us')) {
+    const isGroup = chat.endsWith('@g.us');
+
+    if (plugin.groupOnly && !isGroup) {
       return sock.sendMessage(
         chat,
         { text: 'This command can only be used in groups.' },
@@ -190,14 +201,27 @@ async function handleMessage(message) {
       sock,
       args,
       command,
-      plugin
+      plugin,
+      isOwner: owner,
+      chat,
+      sender: message.key.participant || chat,
+      isGroup
     });
 
-    console.log(`[COMMAND] ${command} | ${sender}`);
+    console.log(`[COMMAND] ${command}`);
 
   } catch (error) {
     console.error('[MESSAGE ERROR]', error);
   }
+}
+
+function scheduleReconnect() {
+  if (retryTimer) return;
+
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    startBot();
+  }, 5000);
 }
 
 async function startBot() {
@@ -216,10 +240,9 @@ async function startBot() {
       version,
       auth: state,
       logger: pino({ level: 'silent' }),
-      browser: ['ALPHA-MD', 'Chrome', '1.0.0'],
+      browser: ['ALPHA-MD', 'Chrome', CONFIG.version],
       printQRInTerminal: true,
       markOnlineOnConnect: true,
-      generateHighQualityLinkPreview: true,
       syncFullHistory: false
     });
 
@@ -233,35 +256,28 @@ async function startBot() {
       }
     });
 
-    sock.ev.on('connection.update', async update => {
+    sock.ev.on('connection.update', update => {
       const { connection, lastDisconnect } = update;
 
       if (connection === 'open') {
-        reconnecting = false;
-        console.log('╔════════════════════════════╗');
-        console.log('║       ALPHA-MD ONLINE      ║');
-        console.log('║       POWERED BY AHMED     ║');
-        console.log('╚════════════════════════════╝');
+        console.log('');
+        console.log('╔════════════════════════════════╗');
+        console.log('║          ALPHA-MD ONLINE       ║');
+        console.log('║        POWERED BY AHMED        ║');
+        console.log('╚════════════════════════════════╝');
+        console.log('');
       }
 
       if (connection === 'close') {
         const code = lastDisconnect?.error?.output?.statusCode;
 
         if (code === DisconnectReason.loggedOut) {
-          console.log('Session logged out. Scan a new QR code.');
+          console.log('Session logged out. A new QR scan is required.');
           return;
         }
 
-        if (!reconnecting) {
-          reconnecting = true;
-          console.log('Connection lost. Reconnecting...');
-
-          setTimeout(() => {
-            reconnecting = false;
-            starting = false;
-            startBot();
-          }, 5000);
-        }
+        console.log('Connection lost. Reconnecting...');
+        scheduleReconnect();
       }
     });
 
@@ -269,18 +285,14 @@ async function startBot() {
 
   } catch (error) {
     console.error('[START ERROR]', error);
+    scheduleReconnect();
+  } finally {
     starting = false;
-
-    setTimeout(() => {
-      startBot();
-    }, 10000);
   }
-
-  starting = false;
 }
 
 process.on('uncaughtException', error => {
-  console.error('[FATAL]', error);
+  console.error('[FATAL ERROR]', error);
 });
 
 process.on('unhandledRejection', error => {
