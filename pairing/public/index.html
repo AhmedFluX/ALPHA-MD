@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,7 +8,6 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
   <header class="navbar">
     <h2>ALPHA<span>-MD</span></h2>
     <div class="online">● SYSTEM</div>
@@ -17,13 +15,12 @@
 
   <main class="container">
     <div class="logo">A</div>
-
     <h1>ALPHA<span>-MD</span></h1>
     <p class="subtitle">NEXT GENERATION WHATSAPP BOT</p>
 
     <section class="card">
       <h2>CONNECT WHATSAPP</h2>
-      <p>Enter your WhatsApp number to get a pairing code.</p>
+      <p>Enter your number and private access key.</p>
 
       <form id="pairForm">
         <label for="phone">PHONE NUMBER</label>
@@ -34,6 +31,20 @@
           autocomplete="tel"
           required
         >
+
+        <label for="accessKey">PRIVATE ACCESS KEY</label>
+        <input
+          type="password"
+          id="accessKey"
+          placeholder="Enter your access key"
+          autocomplete="off"
+          required
+        >
+
+        <label class="consent">
+          <input type="checkbox" id="numberConsent" required>
+          <span>I own this WhatsApp number and authorize linking my own device.</span>
+        </label>
 
         <button type="submit" id="pairBtn">
           GET PAIRING CODE
