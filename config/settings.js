@@ -20,12 +20,16 @@ module.exports = {
   },
 
   // OWNER INFORMATION
-  owner: {
-    name: 'AHMED',
-    numbers: [+923175746978],
-    sudo: [],
-    developer: 'AHMED'
-  },
+
+owner: {
+  name: 'AHMED',
+  numbers: process.env.OWNER_NUMBER
+    ? [process.env.OWNER_NUMBER.replace(/\D/g, '')]
+    : [],
+  sudo: [],
+  developer: 'AHMED'
+},
+
 
   // COMMAND SETTINGS
   command: {
