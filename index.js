@@ -1,225 +1,224 @@
 
-/*
-╔══════════════════════════════════════════════╗
-║                  ALPHA-MD                    ║
-║          NEXT GENERATION WHATSAPP BOT        ║
-║                                              ║
-║                POWERED BY AHMED              ║
-╚══════════════════════════════════════════════╝
-*/
-
 const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore
+  fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 
-const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const pino = require('pino');
 
-// ============================================
-// CONFIGURATION
-// ============================================
+const autoReply = require('./lib/auto-reply');
+const settings = require('./config/settings');
 
 const CONFIG = {
   name: 'ALPHA-MD',
-  prefix: '.',
-  owner: [],
-  mode: 'public',
   version: '1.0.0',
-  author: 'AHMED',
+  author: 'Ahmed',
+  prefix: settings?.command?.prefix || '.',
+  mode: settings?.command?.mode || 'public',
+  owner: settings?.owner?.numbers || [],
   session: './session',
-  plugins: './plugins',
-  database: './database',
-  temp: './temp'
+  plugins: './plugins'
 };
 
 global.alpha = CONFIG;
 global.commands = new Map();
 global.startTime = Date.now();
 
-// ============================================
-// CREATE REQUIRED DIRECTORIES
-// ============================================
+let sock;
+let starting = false;
+let reconnecting = false;
 
-[
-  CONFIG.session,
-  CONFIG.plugins,
-  CONFIG.database,
-  CONFIG.temp
-].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
-
-// ============================================
-// LOGGER
-// ============================================
-
-const logger = pino({
-  level: 'silent'
-});
-
-function log(message) {
-  console.log(`[ALPHA-MD] ${message}`);
+function makeFolders() {
+  [
+    CONFIG.session,
+    CONFIG.plugins,
+    './database',
+    './temp',
+    './logs'
+  ].forEach(folder => {
+    if (!fs.existsSync(folder)) {
+      fs.mkdirSync(folder, { recursive: true });
+    }
+  });
 }
 
-// ============================================
-// COMMAND HANDLER
-// ============================================
+function getMessageText(message) {
+  const msg = message.message || {};
 
-async function loadPlugins() {
-  global.commands.clear();
+  return (
+    msg.conversation ||
+    msg.extendedTextMessage?.text ||
+    msg.imageMessage?.caption ||
+    msg.videoMessage?.caption ||
+    msg.documentMessage?.caption ||
+    ''
+  ).trim();
+}
 
-  const folders = fs.readdirSync(CONFIG.plugins);
+function getPluginFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
 
-  for (const folder of folders) {
-    const folderPath = path.join(CONFIG.plugins, folder);
+  let files = [];
 
-    if (!fs.statSync(folderPath).isDirectory()) continue;
+  for (const item of fs.readdirSync(dir, {
+    withFileTypes: true
+  })) {
+    const fullPath = path.join(dir, item.name);
 
-    const files = fs.readdirSync(folderPath)
-      .filter(file => file.endsWith('.js'));
-
-    for (const file of files) {
-      const pluginPath = path.join(folderPath, file);
-
-      try {
-        delete require.cache[require.resolve(pluginPath)];
-
-        const plugin = require(pluginPath);
-
-        if (!plugin.command || typeof plugin.execute !== 'function') {
-          log(`Invalid plugin: ${file}`);
-          continue;
-        }
-
-        const aliases = Array.isArray(plugin.alias)
-          ? plugin.alias
-          : [];
-
-        for (const command of [plugin.command, ...aliases]) {
-          global.commands.set(command.toLowerCase(), plugin);
-        }
-
-      } catch (error) {
-        console.error(`Plugin error [${file}]:`, error.message);
-      }
+    if (item.isDirectory()) {
+      files = files.concat(getPluginFiles(fullPath));
+    } else if (
+      item.isFile() &&
+      item.name.endsWith('.js')
+    ) {
+      files.push(fullPath);
     }
   }
 
-  log(`${global.commands.size} command triggers loaded.`);
+  return files;
 }
 
-// ============================================
-// MESSAGE HANDLER
-// ============================================
+function loadPlugins() {
+  global.commands.clear();
 
-async function handleMessage(sock, message) {
+  const files = getPluginFiles(CONFIG.plugins);
+  let loaded = 0;
+
+  for (const file of files) {
+    try {
+      delete require.cache[require.resolve(file)];
+
+      const plugin = require(path.resolve(file));
+
+      if (
+        !plugin ||
+        !plugin.command ||
+        typeof plugin.execute !== 'function'
+      ) continue;
+
+      const commands = [
+        plugin.command,
+        ...(Array.isArray(plugin.alias) ? plugin.alias : [])
+      ];
+
+      for (const command of commands) {
+        global.commands.set(
+          String(command).toLowerCase(),
+          plugin
+        );
+      }
+
+      loaded++;
+      console.log('[PLUGIN]', plugin.command);
+    } catch (error) {
+      console.error('[PLUGIN ERROR]', file, error.message);
+    }
+  }
+
+  console.log(`[ALPHA-MD] ${loaded} plugins loaded.`);
+}
+
+async function handleMessage(message) {
   try {
     if (!message.message || message.key.fromMe) return;
+    if (message.key.remoteJid === 'status@broadcast') return;
 
-    const jid = message.key.remoteJid;
-    if (!jid) return;
+    const chat = message.key.remoteJid;
+    const sender = message.key.participant || chat;
+    const text = getMessageText(message);
 
-    const type = Object.keys(message.message)[0];
+    if (!text) return;
 
-    const body =
-      message.message.conversation ||
-      message.message.extendedTextMessage?.text ||
-      message.message.imageMessage?.caption ||
-      message.message.videoMessage?.caption ||
-      message.message.documentMessage?.caption ||
-      '';
+    const isOwner = CONFIG.owner.some(number => {
+      const clean = String(number).replace(/\D/g, '');
+      return clean && sender.split('@')[0].split(':')[0] === clean;
+    });
 
+    // PRIVATE MODE
+    if (CONFIG.mode === 'private' && !isOwner) return;
+
+    // AUTO REPLY
+    if (!text.startsWith(CONFIG.prefix)) {
+      const reply = autoReply.getReply(text);
+
+      if (reply) {
+        await sock.sendMessage(
+          chat,
+          { text: reply },
+          { quoted: message }
+        );
+      }
+
+      return;
+    }
+
+    // COMMAND PARSER
+    const body = text.slice(CONFIG.prefix.length).trim();
     if (!body) return;
 
-    const prefix = CONFIG.prefix;
-
-    if (!body.startsWith(prefix)) return;
-
-    const args = body.slice(prefix.length).trim().split(/\s+/);
-
-    const command = (args.shift() || '').toLowerCase();
-
-    if (!command) return;
+    const args = body.split(/\s+/);
+    const command = args.shift().toLowerCase();
 
     const plugin = global.commands.get(command);
 
     if (!plugin) return;
 
-    const sender = message.key.participant || jid;
+    // OWNER ONLY
+    if (plugin.ownerOnly && !isOwner) {
+      return sock.sendMessage(
+        chat,
+        { text: 'This command is only for the bot owner.' },
+        { quoted: message }
+      );
+    }
 
-    const isGroup = jid.endsWith('@g.us');
+    // GROUP ONLY
+    if (plugin.groupOnly && !chat.endsWith('@g.us')) {
+      return sock.sendMessage(
+        chat,
+        { text: 'This command can only be used in groups.' },
+        { quoted: message }
+      );
+    }
 
-    const context = {
-      sock,
+    await plugin.execute({
       message,
-      jid,
-      sender,
-      body,
+      sock,
       args,
       command,
-      isGroup,
-      type,
-      config: CONFIG,
-      reply: async text => {
-        return sock.sendMessage(jid, { text }, {
-          quoted: message
-        });
-      }
-    };
+      plugin
+    });
 
-    if (
-      CONFIG.mode === 'private' &&
-      !message.key.fromMe &&
-      !CONFIG.owner.includes(sender)
-    ) return;
-
-    await plugin.execute(context);
+    console.log(`[COMMAND] ${command} | ${sender}`);
 
   } catch (error) {
-    console.error('Message Handler Error:', error);
+    console.error('[MESSAGE ERROR]', error);
   }
 }
 
-// ============================================
-// CONNECTION
-// ============================================
+async function startBot() {
+  if (starting) return;
+  starting = true;
 
-async function startAlpha() {
   try {
-    log('Starting ALPHA-MD...');
-    log('Loading plugins...');
+    makeFolders();
 
-    await loadPlugins();
+    const { state, saveCreds } =
+      await useMultiFileAuthState(CONFIG.session);
 
-    const {
-      state,
-      saveCreds
-    } = await useMultiFileAuthState(CONFIG.session);
+    const { version } = await fetchLatestBaileysVersion();
 
-    const {
-      version
-    } = await fetchLatestBaileysVersion();
-
-    const sock = makeWASocket({
+    sock = makeWASocket({
       version,
-      logger,
-      printQRInTerminal: true,
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(
-          state.keys,
-          logger
-        )
-      },
+      auth: state,
+      logger: pino({ level: 'silent' }),
       browser: ['ALPHA-MD', 'Chrome', '1.0.0'],
+      printQRInTerminal: true,
+      markOnlineOnConnect: true,
       generateHighQualityLinkPreview: true,
       syncFullHistory: false
     });
@@ -230,86 +229,62 @@ async function startAlpha() {
       if (type !== 'notify') return;
 
       for (const message of messages) {
-        await handleMessage(sock, message);
+        await handleMessage(message);
       }
     });
 
     sock.ev.on('connection.update', async update => {
       const { connection, lastDisconnect } = update;
 
-      if (connection === 'connecting') {
-        log('Connecting to WhatsApp...');
-      }
-
       if (connection === 'open') {
-        log('ALPHA-MD connected successfully!');
-        log(`Powered By ${CONFIG.author}`);
-        log(`${global.commands.size} command triggers ready.`);
+        reconnecting = false;
+        console.log('╔════════════════════════════╗');
+        console.log('║       ALPHA-MD ONLINE      ║');
+        console.log('║       POWERED BY AHMED     ║');
+        console.log('╚════════════════════════════╝');
       }
 
       if (connection === 'close') {
-        const statusCode = lastDisconnect?.error
-          ?.output?.statusCode;
+        const code = lastDisconnect?.error?.output?.statusCode;
 
-        const shouldReconnect =
-          statusCode !== DisconnectReason.loggedOut;
+        if (code === DisconnectReason.loggedOut) {
+          console.log('Session logged out. Scan a new QR code.');
+          return;
+        }
 
-        log(`Connection closed. Reconnect: ${shouldReconnect}`);
+        if (!reconnecting) {
+          reconnecting = true;
+          console.log('Connection lost. Reconnecting...');
 
-        if (shouldReconnect) {
           setTimeout(() => {
-            startAlpha().catch(console.error);
+            reconnecting = false;
+            starting = false;
+            startBot();
           }, 5000);
-        } else {
-          log('Session logged out. Pair again.');
         }
       }
     });
 
-    return sock;
+    loadPlugins();
 
   } catch (error) {
-    console.error('ALPHA-MD Startup Error:', error);
+    console.error('[START ERROR]', error);
+    starting = false;
 
     setTimeout(() => {
-      startAlpha().catch(console.error);
+      startBot();
     }, 10000);
   }
+
+  starting = false;
 }
 
-// ============================================
-// SYSTEM INFORMATION
-// ============================================
-
-global.alphaSystem = {
-  platform: os.platform(),
-  architecture: os.arch(),
-  node: process.version,
-  memory: () => ({
-    total: os.totalmem(),
-    free: os.freemem()
-  }),
-  uptime: () => process.uptime(),
-  started: global.startTime
-};
-
-// ============================================
-// START BOT
-// ============================================
-
 process.on('uncaughtException', error => {
-  console.error('Uncaught Exception:', error);
+  console.error('[FATAL]', error);
 });
 
 process.on('unhandledRejection', error => {
-  console.error('Unhandled Rejection:', error);
+  console.error('[PROMISE ERROR]', error);
 });
 
-startAlpha();
-
-module.exports = {
-  startAlpha,
-  loadPlugins,
-  handleMessage,
-  CONFIG
-};
+startBot();
