@@ -1,0 +1,28 @@
+name: ALPHA-MD Code Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check JavaScript Files
+        run: |
+          find . -type f -name "*.js" \
+          -not -path "./node_modules/*" \
+          -exec node --check {} \;
