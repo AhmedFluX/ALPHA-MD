@@ -22,7 +22,7 @@ module.exports = {
   // OWNER INFORMATION
   owner: {
     name: 'AHMED',
-    numbers: [],
+    numbers: [+923175746978],
     sudo: [],
     developer: 'AHMED'
   },
@@ -131,7 +131,7 @@ module.exports = {
   // STICKER SETTINGS
   sticker: {
     packname: 'ALPHA-MD',
-    author: 'Ahmed',
+    author: 'AHMED',
     quality: 80
   },
 
