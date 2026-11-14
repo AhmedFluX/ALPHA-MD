@@ -1,0 +1,37 @@
+
+{
+  "name": "ALPHA-MD",
+  "version": "1.0.0",
+  "description": "ALPHA-MD WhatsApp Multi-Device Bot | Powered By Ahmed",
+  "main": "index.js",
+  "type": "commonjs",
+  "author": "AHMED",
+  "license": "MIT",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "alpha-md",
+    "whatsapp-bot",
+    "baileys",
+    "multi-device",
+    "whatsapp-automation",
+    "AHMED"
+  ],
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "axios": "latest",
+    "chalk": "^4.1.2",
+    "cheerio": "latest",
+    "form-data": "latest",
+    "jimp": "latest",
+    "lodash": "latest",
+    "moment-timezone": "latest",
+    "pino": "latest",
+    "qrcode": "latest",
+    "sharp": "latest",
+    "uuid": "latest"
+  }
+}
